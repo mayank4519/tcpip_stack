@@ -28,6 +28,8 @@ typedef struct node_ {
   char node_name[NODE_NAME_SIZE];
   interface_t *intf[MAX_INTF_PER_NODE];
   node_nw_prop_t node_nw_prop;
+  unsigned int udp_port_number;
+  int udp_sock_fd;
   gl_thread_t graph_glue;
 };
 
@@ -54,6 +56,7 @@ dump_intf(interface_t* intf);
 #define GET_NODE(curr) (node_t*)((char*)curr - offsetof(node_t, graph_glue))
 
 GLTHREAD_TO_STRUCT(graph_glue_to_node, node_t, graph_glue);
+
 static inline int 
 find_intf_available_slot(node_t *node) {
   for(int i=0; i<MAX_INTF_PER_NODE; i++) {
@@ -76,8 +79,10 @@ get_node_intf_by_name(node_t* node, char* local_if) {
    if(strncmp(intf->if_name, local_if, IF_NAME_SIZE) == 0)
      return intf;
  }
+ return NULL;
 }
 
+node_t* get_node_by_node_name(graph_t* topo, char*node_name);
 void dump_graph(graph_t* topo);
 void dump_node(node_t* node);
 void dump_intf(interface_t* intf);

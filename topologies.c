@@ -1,5 +1,8 @@
 #include "graph.h"
 
+extern void
+network_start_pkt_receiver_thread(graph_t*);
+
 graph_t *
 build_first_topo() {
 
@@ -44,6 +47,15 @@ build_first_topo() {
   node_set_loopback_address(R2_re, "122.1.1.2");
   node_set_intf_ip_addres(R2_re, "eth0/3", "30.0.0.2", 24); 
   node_set_intf_ip_addres(R2_re, "eth0/5", "40.0.0.2", 24); 
+
+  network_start_pkt_receiver_thread(topo);
+
+  sleep(3);
+  interface_t* intf = get_node_intf_by_name(R0_re, "eth0/4");
+
+  char *msg = "Working fine so far!";
+  send_pkt_out(msg, strlen(msg), intf);
+
 
   return topo;
 }

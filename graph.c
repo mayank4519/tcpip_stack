@@ -2,6 +2,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+extern void
+init_udp_socket(node);
+
 graph_t* create_new_graph(char* topology_name) {
   graph_t* graph = calloc(1, sizeof(graph_t));
   strncpy(graph->topology_name, topology_name, 32);
@@ -16,6 +19,8 @@ node_t* create_graph_node(graph_t* graph, char* node_name) {
   strncpy(node->node_name, node_name, NODE_NAME_SIZE);
   node->node_name[NODE_NAME_SIZE] = '\0';
 
+  init_udp_socket(node);
+  init_node_nw_prop(&node->node_nw_prop);
   glthread_node_init(&node->graph_glue);
   glthread_add_next(&graph->node_list, &node->graph_glue);
 
@@ -51,8 +56,8 @@ insert_link_between_two_nodes(node_t* n1,
  empty_intf_slot = find_intf_available_slot(n2);
  n2->intf[empty_intf_slot] = &link->intf2; 
 
- init_node_nw_prop(&link->intf1.intf_nw_prop);
- init_node_nw_prop(&link->intf2.intf_nw_prop);
+ init_intf_nw_prop(&link->intf1.intf_nw_prop);
+ init_intf_nw_prop(&link->intf2.intf_nw_prop);
 
  /*Assign random MAC*/
  interface_assign_mac_address(&link->intf1); 
@@ -65,10 +70,24 @@ void dump_graph(graph_t* topo) {
   node_t *node;
   printf("Topology name: %s\n", topo->topology_name);
   ITERATE_GLTHREAD_BEGIN(&topo->node_list, curr) {
-    //node = GET_NODE(curr);
     node = graph_glue_to_node(curr);
     dump_node(node);
   } ITERATE_GLTHREAD_END(&topo->node_list, curr);
+}
+
+node_t* get_node_by_node_name(graph_t* topo, char*node_name) {
+  
+  node_t *node;
+  gl_thread_t* curr;
+
+ ITERATE_GLTHREAD_BEGIN(&topo->node_list, curr) {
+
+   node = GET_NODE(curr);
+   if(node->node_name == node_name) 
+     return node;
+ } ITERATE_GLTHREAD_END(&topo->node_list, curr);
+
+  return NULL;
 }
 
 void dump_node(node_t* node) {

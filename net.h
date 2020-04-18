@@ -51,7 +51,7 @@ init_intf_nw_prop(intf_nw_prop_t* intf_nw_prop) {
 #define NODE_LO_ADDR(node_ptr) ((node_ptr)->node_nw_prop.lb_ip.ip_addr)
 
 bool node_set_loopback_address(node_t* node, char* ip_addr);
-bool node_set_intf_ip_addres(node_t* node, char* local_if, char* ip_addr, char mask);
+bool node_set_intf_ip_addres(node_t* node, char* local_if, char* ip_addr, unsigned int mask);
 void interface_assign_mac_address(interface_t *interface);
 void dump_nw_graph(graph_t* graph);
 #endif
