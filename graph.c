@@ -52,11 +52,9 @@ insert_link_between_two_nodes(node_t* n1,
 
  empty_intf_slot = find_intf_available_slot(n1);
  n1->intf[empty_intf_slot] = &link->intf1; 
- printf("Intf name: %s\t", link->intf1.if_name);
 
  empty_intf_slot = find_intf_available_slot(n2);
  n2->intf[empty_intf_slot] = &link->intf2; 
- printf("Intf name: %s\n", link->intf2.if_name);
 
  init_intf_nw_prop(&link->intf1.intf_nw_prop);
  init_intf_nw_prop(&link->intf2.intf_nw_prop);

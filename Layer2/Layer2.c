@@ -139,12 +139,15 @@ dump_arp_table(arp_table_t *arp_table) {
 void
 arp_table_update_from_arp_reply(arp_table_t *arp_table,
                                 arp_hdr_t *arp_hdr, interface_t *iif) {
+
   unsigned int src_ip = 0;
-  src_ip = arp_hdr->src_ip;
   assert(arp_hdr->op_code == ARP_REPLY);
+
+  src_ip = htonl(arp_hdr->src_ip);
   arp_entry_t* arp_entry = calloc(1, sizeof(arp_entry_t));
   inet_ntop(AF_INET, &src_ip, &arp_entry->ip_addr.ip_addr, 16);
   arp_entry->ip_addr.ip_addr[15] = '\0';
+
   strncpy(arp_entry->mac_addr.mac, arp_hdr->src_mac.mac, sizeof(mac_add_t));
   strncpy(arp_entry->oif, iif->if_name, IF_NAME_SIZE); 
   arp_entry->oif[IF_NAME_SIZE] = '\0';
