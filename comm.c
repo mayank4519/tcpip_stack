@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <netdb.h> /*for struct hostent*/
 
-static unsigned int udp_port_number = 40000;
+static unsigned int udp_port_number = 50000;
 
 static char recv_buffer[MAX_PACKET_BUFFER_SIZE];
 static char send_buffer[MAX_PACKET_BUFFER_SIZE];
@@ -34,14 +34,20 @@ init_udp_socket(node_t* node) {
      return -1;
    }
 
+  const int trueFlag = 1;
+  if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &trueFlag, sizeof(int)) < 0) {
+    printf("setsockopt() API failed\n");
+    return -1;
+  }
+
   struct sockaddr_in node_addr;
   node_addr.sin_family = AF_INET;
   node_addr.sin_port  = node->udp_port_number;
   node_addr.sin_addr.s_addr = INADDR_ANY;
 
   if (bind(sock_fd, (struct sockaddr *)&node_addr, sizeof(struct sockaddr)) == -1) {
-    printf("Socket bind failed for node: %s\n", node->node_name);
-    return -1;
+    printf("Socket bind failed for node: %s. Error-no: %d\n", node->node_name, errno);
+    return;
   }
 
   node->udp_sock_fd = sock_fd;
@@ -102,13 +108,39 @@ send_pkt_out(char* pkt, unsigned int pkt_size,
  return rc;
 }
 
+char*
+pkt_buffer_shift_right(char* pkt, int pkt_size, int total_size) {
+
+  char* temp_data;
+  int empty_size = total_size - pkt_size;
+
+  strncpy(temp_data, pkt, pkt_size);
+  memset(pkt, 0, total_size);
+  pkt += empty_size;
+  strncpy(pkt, temp_data, pkt_size);
+
+  return pkt;
+}
+
+extern void
+layer2_frame_recv(node_t *node, interface_t *interface,
+                     char *pkt, unsigned int pkt_size);
+
 int
 pkt_receive(node_t* node, interface_t* intf,
-	    char* recv_data,
-	    int size)
+	    char* pkt,
+	    int pkt_size)
 {
 
-  printf("msg recvd = %s, on node = %s, IIF = %s\n", recv_data, node->node_name, intf->if_name);
+  //printf("msg recvd = %s, on node = %s, IIF = %s\n", recv_data, node->node_name, intf->if_name);
+  
+ /*Make room in the packet buffer size by right shifting DATA so that
+ * tcp_ip stack can add headers to the packet buffer*/
+
+ /*pkt = pkt_buffer_shift_right(pkt, pkt_size,
+				MAX_PACKET_BUFFER_SIZE - IF_NAME_SIZE);*/
+
+  layer2_frame_recv(node, intf, pkt, pkt_size ); 
   return 0;
 }
 
@@ -147,7 +179,7 @@ _network_start_pkt_receiver_thread(void *arg) {
 
  ITERATE_GLTHREAD_BEGIN(&topo->node_list, curr) {
 
-   node = GET_NODE(curr);
+   node = graph_glue_to_node(curr);
    if(node == NULL) continue;
 
    if(node->udp_sock_fd > max_sock_fd)
@@ -165,7 +197,7 @@ _network_start_pkt_receiver_thread(void *arg) {
 
   ITERATE_GLTHREAD_BEGIN(&topo->node_list, curr) {
 
-    node = GET_NODE(curr);
+    node = graph_glue_to_node(curr);
     if(FD_ISSET(node->udp_sock_fd, &active_sock_fd_set)) {
 
       memset(recv_buffer, 0, MAX_PACKET_BUFFER_SIZE);

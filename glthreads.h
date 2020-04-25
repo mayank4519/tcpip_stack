@@ -9,9 +9,8 @@ typedef struct gl_thread_ {
 }gl_thread_t;
 
 void glthread_add_next(gl_thread_t *list, gl_thread_t *glnode);
-void glthread_remove(gl_thread_t *list, gl_thread_t *glnode);
-void init_glthread(gl_thread_t *glthread, unsigned int offset);
 void glthread_node_init(gl_thread_t *glthread);
+void remove_glthread(gl_thread_t *glnode);
 
 #define BASE(start) ((start)->right)
 

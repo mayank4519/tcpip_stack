@@ -1,5 +1,6 @@
 #ifndef __GRAPH__
 #define __GRAPH__
+
 #include "glthreads.h"
 #include "net.h"
 
@@ -18,13 +19,14 @@ typedef struct interface_ {
   intf_nw_prop_t intf_nw_prop;
 }interface_t;
 
-typedef struct link_ {
+struct link_ {
   interface_t intf1;
   interface_t intf2;
   unsigned int cost;
 };
 
-typedef struct node_ {
+struct node_ {
+
   char node_name[NODE_NAME_SIZE];
   interface_t *intf[MAX_INTF_PER_NODE];
   node_nw_prop_t node_nw_prop;
@@ -53,7 +55,7 @@ dump_node(node_t* node);
 void
 dump_intf(interface_t* intf);
 
-#define GET_NODE(curr) (node_t*)((char*)curr - offsetof(node_t, graph_glue))
+//#define GET_NODE(curr) (node_t*)((char*)curr - offsetof(node_t, graph_glue))
 
 GLTHREAD_TO_STRUCT(graph_glue_to_node, node_t, graph_glue);
 
@@ -72,17 +74,33 @@ get_node_intf_by_name(node_t* node, char* local_if) {
 
  interface_t* intf;
 
- for(unsigned int i=0;i < MAX_INTF_PER_NODE; i++) {
+ for(int i=0;i < MAX_INTF_PER_NODE; i++) {
    intf = node->intf[i];
-   if (intf == NULL) return NULL;
-
+   if (intf == NULL) {
+	return NULL;
+   }
    if(strncmp(intf->if_name, local_if, IF_NAME_SIZE) == 0)
      return intf;
  }
  return NULL;
 }
 
-node_t* get_node_by_node_name(graph_t* topo, char*node_name);
+static inline node_t*
+get_node_by_node_name(graph_t* topo, char* node_name) {
+
+  node_t *node;
+  gl_thread_t* curr;
+
+ ITERATE_GLTHREAD_BEGIN(&topo->node_list, curr) {
+
+   node = graph_glue_to_node(curr);
+   if(strncmp(node->node_name, node_name, strlen(node_name)) == 0)
+     return node;
+ } ITERATE_GLTHREAD_END(&topo->node_list, curr);
+
+  return NULL;
+}
+
 void dump_graph(graph_t* topo);
 void dump_node(node_t* node);
 void dump_intf(interface_t* intf);

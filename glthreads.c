@@ -18,7 +18,7 @@ void glthread_add_next(gl_thread_t *list, gl_thread_t *glnode) {
   node->left = glnode;
 }
 
-/*void _remove_glthread(gl_thread_node_t *glnode) {
+void remove_glthread(gl_thread_t *glnode) {
   if(glnode->left == NULL) {
     if (glnode->right != NULL) {
       glnode->right->left = NULL;
@@ -34,14 +34,13 @@ void glthread_add_next(gl_thread_t *list, gl_thread_t *glnode) {
     return;
   }
   
-  glnode->right->left = glnode->left->right;
-  glnode->left->right = glnode->right->left;
+  glnode->right->left = glnode->left;
+  glnode->left->right = glnode->right;
   glnode->left = NULL;
   glnode->right = NULL;
-  return;
 }
 
-void glthread_remove(gl_thread_t *list, gl_thread_node_t *glnode) {
+/*void glthread_remove(gl_thread_t *list, gl_thread_node_t *glnode) {
    gl_thread_node_t *head = list->head;
    if(head == glnode)
      list->head = head->right;

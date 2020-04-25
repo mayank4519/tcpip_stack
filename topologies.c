@@ -27,7 +27,7 @@ build_first_topo() {
 
 #endif
 
-  graph_t *topo = create_new_graph("Generic Graph");
+  graph_t *topo = create_new_graph("Hello Generic Graph");
   node_t *R0_re = create_graph_node(topo, "R0_re");
   node_t *R1_re = create_graph_node(topo, "R1_re");
   node_t *R2_re = create_graph_node(topo, "R2_re");
@@ -40,21 +40,24 @@ build_first_topo() {
   node_set_intf_ip_addres(R0_re, "eth0/4", "40.0.0.1", 24); 
   node_set_intf_ip_addres(R0_re, "eth0/0", "20.0.0.1", 24); 
 
+  node_set_loopback_address(R2_re, "122.1.1.2");
+  node_set_intf_ip_addres(R2_re, "eth0/3", "30.0.0.2", 24); 
+  node_set_intf_ip_addres(R2_re, "eth0/5", "40.0.0.2", 24); 
+  
   node_set_loopback_address(R1_re, "122.1.1.1");
   node_set_intf_ip_addres(R1_re, "eth0/1", "20.0.0.2", 24); 
   node_set_intf_ip_addres(R1_re, "eth0/2", "30.0.0.1", 24); 
 
-  node_set_loopback_address(R2_re, "122.1.1.2");
-  node_set_intf_ip_addres(R2_re, "eth0/3", "30.0.0.2", 24); 
-  node_set_intf_ip_addres(R2_re, "eth0/5", "40.0.0.2", 24); 
 
   network_start_pkt_receiver_thread(topo);
 
-  sleep(3);
+  /*sleep(3);
   interface_t* intf = get_node_intf_by_name(R0_re, "eth0/4");
+  interface_t* intf1 = get_node_intf_by_name(R1_re, "eth0/2");
 
   char *msg = "Working fine so far!";
   send_pkt_out(msg, strlen(msg), intf);
+  send_pkt_out(msg, strlen(msg), intf1);*/
 
 
   return topo;
