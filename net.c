@@ -3,19 +3,27 @@
 #include<assert.h>
 #include<stdio.h>
 
-char*
-generate_hash(char* node_name, char* intf_name) {
-  return "850951141011";
+/*Just some Random number generator*/
+static unsigned int
+hash_code(void *ptr, unsigned int size){
+    unsigned int value=0, i =0;
+    char *str = (char*)ptr;
+    while(i < size)
+    {
+        value += *str;
+        value*=97;
+        str++;
+        i++;
+    }
+    return value;
 }
 
 void
 interface_assign_mac_address(interface_t *interface){
 
-    memset(INTF_MAC(interface), 0, 6);
-    char* hash_value = generate_hash(interface->attr_node->node_name, interface->if_name);
- 
-    strcpy(INTF_MAC(interface), hash_value);
-    strcat(INTF_MAC(interface), interface->if_name);
+    unsigned int hash_code_val = hash_code(interface, sizeof(interface_t));
+    memset(INTF_MAC(interface), 0, sizeof(mac_add_t));
+    memcpy(INTF_MAC(interface), (char *)&hash_code_val, sizeof(unsigned int)); 
 }
 
 bool 

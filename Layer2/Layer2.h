@@ -9,6 +9,31 @@
 #define ARP_MSG 806
 #define MAC_BROADCAST_ADDR 0XFFFFFFFFFFFF
 
+/*VLAN Support*/
+
+#pragma pack (push,1)
+typedef struct vlan_802q_hdr_ {
+
+  unsigned short tpid; /*0X8100*/
+  short tci_pcp : 3;   /*intial 4 bits are not used*/
+  short tci_dei : 1;   /*Not used*/
+  short tci_vid : 12;  /*VLAN ranges*/
+}vlan_802q_hdr_t;
+
+typedef struct vlan_ethernet_hdr_ {
+
+  mac_add_t dst_addr;
+  mac_add_t src_addr;
+  vlan_802q_hdr_t vlan_802q_hdr;
+  short type;
+  char payload[248];
+  unsigned int FCS;
+}vlan_ethernet_hdr_t;
+#pragma pack (pop)
+
+#define VLAN_ETH_HDR_SZ_EXCL_PAYLOAD \
+		(sizeof(vlan_ethernet_hdr_t) - sizeof(((vlan_ethernet_hdr_t*)0)->payload))
+
 #pragma pack (push,1)
 typedef struct arp_hdr_ {
 
@@ -25,32 +50,16 @@ typedef struct arp_hdr_ {
 
 typedef struct ethernet_hdr_ {
 
-  mac_add_t src_addr;
   mac_add_t dst_addr;
-  unsigned short type;
+  mac_add_t src_addr;
+  short type;
   char payload[248];
   unsigned int FCS; 
 }ethernet_hdr_t;
 #pragma pack(pop)
 
-/*static inline bool
-l2_frame_recv_qualify_on_interface(interface_t *interface,
-                                    ethernet_hdr_t *ethernet_hdr){
-
-  //if(!IS_INTF_L3_MODE(interface))  return false;
-  //if(!interface->intf_nw_prop.is_ip_config) return true;
-
-
-  if(memcmp(ethernet_hdr->dst_addr.mac, 
-	   INTF_MAC(interface), 
-	   sizeof(mac_add_t)) == 0)
-    return true;
-
-  if(IS_MAC_BROADCAST_ADDR(ethernet_hdr->dst_addr.mac))
-    return true;
-
-  return false;
-}*/
+#define ETH_HDR_SZ_EXCL_PAYLOAD \
+		(sizeof(ethernet_hdr_t) - sizeof(((ethernet_hdr_t*)0)->payload))
 
 /*ARP table entry*/
 typedef struct arp_table_ {
@@ -66,6 +75,14 @@ typedef struct arp_entry_ {
 }arp_entry_t;
 GLTHREAD_TO_STRUCT(arp_glue_to_arp_entry, arp_entry_t, arp_glue);
 //#define GET_NODE(curr) (arp_entry_t*)((char*)curr - offsetof(arp_entry_t, arp_glue))
+
+static inline vlan_802q_hdr_t*
+is_pkt_vlan_tagged(ethernet_hdr_t* ethernet_hdr) {
+
+ if (ethernet_hdr->type == 0X8100)
+    return (vlan_802q_hdr_t*)&(ethernet_hdr->type);
+ return NULL;
+}
 
 void
 init_arp_table(arp_table_t** arp_table);
@@ -99,4 +116,21 @@ process_arp_reply_request(node_t* node, interface_t* iif,
 static void
 process_arp_broadcast_request(node_t* node, interface_t* iif,
                          ethernet_hdr_t* ethernet_hdr);
+
+void
+node_set_intf_l2_mode(node_t* node, char* iif,
+			intf_l2_mode_t l2_mode);
+
+
+ethernet_hdr_t*
+tag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
+			unsigned int total_pkt_size,
+			int vlan_id,
+                        unsigned int *new_pkt_size);
+
+ethernet_hdr_t*
+untag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
+			unsigned int total_pkt_size,
+			unsigned int *new_pkt_size);
+
 #endif

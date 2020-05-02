@@ -108,20 +108,6 @@ send_pkt_out(char* pkt, unsigned int pkt_size,
  return rc;
 }
 
-char*
-pkt_buffer_shift_right(char* pkt, int pkt_size, int total_size) {
-
-  char* temp_data;
-  int empty_size = total_size - pkt_size;
-
-  strncpy(temp_data, pkt, pkt_size);
-  memset(pkt, 0, total_size);
-  pkt += empty_size;
-  strncpy(pkt, temp_data, pkt_size);
-
-  return pkt;
-}
-
 extern void
 layer2_frame_recv(node_t *node, interface_t *interface,
                      char *pkt, unsigned int pkt_size);
@@ -132,14 +118,6 @@ pkt_receive(node_t* node, interface_t* intf,
 	    int pkt_size)
 {
 
-  //printf("msg recvd = %s, on node = %s, IIF = %s\n", recv_data, node->node_name, intf->if_name);
-  
- /*Make room in the packet buffer size by right shifting DATA so that
- * tcp_ip stack can add headers to the packet buffer*/
-
- /*pkt = pkt_buffer_shift_right(pkt, pkt_size,
-				MAX_PACKET_BUFFER_SIZE - IF_NAME_SIZE);*/
-
   layer2_frame_recv(node, intf, pkt, pkt_size ); 
   return 0;
 }
@@ -147,7 +125,7 @@ pkt_receive(node_t* node, interface_t* intf,
 static void
 _pkt_receive(node_t* node,
 	     char* pkt_with_aux_data,
-             int recv_bytes)
+             unsigned int recv_bytes)
 {
 
   char* get_intf_name =  pkt_with_aux_data;
@@ -225,4 +203,23 @@ network_start_pkt_receiver_thread(graph_t* topo) {
  pthread_create(&recv_pkt_thread, &attr,
 		_network_start_pkt_receiver_thread,
 		(void*)topo);
+}
+
+int
+send_pkt_flood(node_t* node,
+               interface_t *recv_intf,
+               char* pkt, unsigned int pkt_size) {
+
+  interface_t* intf;
+  unsigned int i = 0;
+  for(; i < MAX_INTF_PER_NODE; i++) {
+    intf = node->intf[i];
+
+    if(intf == NULL)
+	return 0;
+    if(strncmp(intf->if_name, recv_intf->if_name, IF_NAME_SIZE) != 0) {
+      send_pkt_out(pkt, pkt_size, intf);
+    }
+  }
+  return 0;
 }

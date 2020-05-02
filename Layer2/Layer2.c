@@ -12,20 +12,89 @@ init_arp_table(arp_table_t** arp_table) {
   glthread_node_init(&((*arp_table)->arp_entries)); 
 }
 
+void
+interface_set_l2_mode(node_t* node, 
+                     interface_t* interface, char* l2mode) {
+
+  intf_l2_mode_t intf_l2_mode;
+  if(strncmp(l2mode, "access", strlen("access")) == 0)
+    intf_l2_mode = ACCESS;
+  
+  else if(strncmp(l2mode, "trunk", strlen("access")) == 0)
+    intf_l2_mode = TRUNK;
+
+  else
+    assert(0);
+
+  if(INTF_L2_MODE(interface) == intf_l2_mode)
+    return;
+
+  if(IS_INTF_L3_MODE(interface)){
+    interface->intf_nw_prop.is_ip_config = false;
+    INTF_L2_MODE(interface) = intf_l2_mode;
+    return;
+  }
+
+  if(INTF_L2_MODE(interface) == L2_MODE_UNKNOWN) {
+    INTF_L2_MODE(interface) = intf_l2_mode;
+    printf("%s L2 mode set on interface: %s\n", intf_l2_mode_str(INTF_L2_MODE(interface)), interface->if_name);
+    return;
+  }
+
+  if(INTF_L2_MODE(interface) == ACCESS && 
+	intf_l2_mode == TRUNK) {
+    INTF_L2_MODE(interface) = intf_l2_mode;
+    printf("%s L2 mode set on interface: %s\n", intf_l2_mode_str(INTF_L2_MODE(interface)), interface->if_name);
+    return;
+  }
+
+  if(INTF_L2_MODE(interface) == TRUNK && 
+	intf_l2_mode == ACCESS) {
+
+    INTF_L2_MODE(interface) = intf_l2_mode;
+
+    unsigned int i = 0;
+
+    for ( ;i < MAX_VLAN_MEMBERSHIP; i++) {
+        interface->intf_nw_prop.vlans[i] = 0;
+    }
+
+    printf("%s L2 mode set on interface: %s\n", intf_l2_mode_str(INTF_L2_MODE(interface)), interface->if_name);
+    return;
+  }
+
+}
+
+void
+node_set_intf_l2_mode(node_t* node, char* iif,
+                        intf_l2_mode_t l2_mode) {
+
+  interface_t* interface = get_node_intf_by_name(node, iif);
+  assert(interface); 
+  interface_set_l2_mode(node, interface, intf_l2_mode_str(l2_mode));
+}
+
 static bool
 l2_frame_recv_qualify_on_interface(interface_t *interface,
                                     ethernet_hdr_t *ethernet_hdr){
 
-  //if(!IS_INTF_L3_MODE(interface))  return false;
-  //if(!interface->intf_nw_prop.is_ip_config) return true;
+  if(!IS_INTF_L3_MODE(interface) &&
+      INTF_L2_MODE(interface) == L2_MODE_UNKNOWN)  
+	return false;
 
+  if(!IS_INTF_L3_MODE(interface) &&
+      INTF_L2_MODE(interface) == ACCESS ||
+      INTF_L2_MODE(interface) == TRUNK)  
+	return true;
 
-  if(memcmp(ethernet_hdr->dst_addr.mac,
+  if(IS_INTF_L3_MODE(interface) &&
+	memcmp(ethernet_hdr->dst_addr.mac,
            INTF_MAC(interface),
            sizeof(mac_add_t)) == 0)
     return true;
 
-  if(IS_MAC_BROADCAST_ADDR(ethernet_hdr->dst_addr.mac))
+  if(IS_INTF_L3_MODE(interface) &&
+	IS_MAC_BROADCAST_ADDR(ethernet_hdr->dst_addr.mac))
     return true;
 
   return false;
@@ -40,11 +109,15 @@ layer2_frame_recv(node_t *node, interface_t *interface,
 
     if(l2_frame_recv_qualify_on_interface(interface, ethernet_hdr) == false){
 
-        printf("L2 Frame Rejected");
+        printf("L2 Frame Rejected on interface: %s\n", interface->if_name);
         return;
     }
 
-    printf("L2 Frame Accepted\n");
+    printf("L2 Frame Accepted on interface: %s of node: %s\n", interface->if_name, node->node_name);
+
+    /*Handle Reception of a L2 Frame on L3 Interface*/
+    if(IS_INTF_L3_MODE(interface)) {
+
     switch(ethernet_hdr->type) {
       case ARP_MSG:
       {
@@ -65,6 +138,14 @@ layer2_frame_recv(node_t *node, interface_t *interface,
 	printf("Not an ARP msg\n");
 	break;
     }
+    }
+    else if(INTF_L2_MODE(interface) == TRUNK ||
+		INTF_L2_MODE(interface) == ACCESS) {
+        printf("Interface is in %s L2 mode\n", intf_l2_mode_str(INTF_L2_MODE(interface)));
+	l2_switch_recv_frame(interface, pkt, pkt_size);
+    }
+    else
+	return;
     
 }
 
@@ -163,14 +244,17 @@ static void
 send_arp_reply_msg(ethernet_hdr_t* ethernet_hdr, interface_t *oif) {
 
  arp_hdr_t* arp_hdr = (arp_hdr_t*)ethernet_hdr->payload;
+
  ethernet_hdr_t* ethernet_hdr_reply = calloc(1, sizeof(ethernet_hdr_t) + sizeof(arp_hdr_t));
 
  memcpy(ethernet_hdr_reply->dst_addr.mac, arp_hdr->src_mac.mac, sizeof(mac_add_t));
  memcpy(ethernet_hdr_reply->src_addr.mac, INTF_MAC(oif), sizeof(mac_add_t));
+
  ethernet_hdr_reply->type = ARP_MSG;
  ethernet_hdr_reply->FCS = 0;
 
- arp_hdr_t* arp_hdr_reply = (arp_hdr_t*)ethernet_hdr_reply->payload;
+ arp_hdr_t* arp_hdr_reply = (arp_hdr_t*)(ethernet_hdr_reply->payload);
+
  arp_hdr_reply->hw_type        = 1;
  arp_hdr_reply->proto_type     = 0x0800;
  arp_hdr_reply->hw_addr_len    = sizeof(mac_add_t);
@@ -194,7 +278,7 @@ static void
 process_arp_reply_request(node_t* node, interface_t* iif, 
 			 ethernet_hdr_t* ethernet_hdr) {
 
-  printf("ARP Reply msg recieved on interface: %s of node: %s\n", iif->if_name, node->node_name);
+  printf("process_arp_reply_request: on interface: %s of node: %s\n", iif->if_name, node->node_name);
   arp_table_update_from_arp_reply(NODE_ARP_TABLE(node), 
 				(arp_hdr_t *)ethernet_hdr->payload, iif);
 }
@@ -211,7 +295,7 @@ process_arp_broadcast_request(node_t* node, interface_t* iif,
   ip_addr[15] = '\0';
   
   if(strncmp(ip_addr, INTF_IP(iif), 16) != 0) { 
-    printf("%s: ARP Broadcast req msg dropped, destination IP: %s didnt match with interface IP: %s", 
+    printf("%s: ARP Broadcast req msg dropped, destination IP: %s didnt match with interface IP: %s\n", 
 		node->node_name, ip_addr, INTF_IP(iif));
     return;
   }
@@ -265,5 +349,119 @@ send_arp_broadcast_request(node_t *node,
   free(ethernet_hdr);
 }
 
+ethernet_hdr_t*
+tag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
+                        unsigned int total_pkt_size,
+                        int vlan_id,
+                        unsigned int *new_pkt_size) {
 
+  vlan_802q_hdr_t* vlan_802q_hdr = is_pkt_vlan_tagged(ethernet_hdr);
 
+  if(vlan_802q_hdr != NULL) {
+    vlan_802q_hdr->tci_vid = vlan_id;
+    *new_pkt_size = total_pkt_size;
+    return ethernet_hdr;
+  }
+
+  /*If the packet doesn't have a vlan header. Do following*/
+
+  /*Take a backup of ethernet hdr without payload and FCS*/
+  ethernet_hdr_t ethernet_hdr_old;
+  memcpy((char*)&ethernet_hdr_old, 
+	(char*)ethernet_hdr, 
+	ETH_HDR_SZ_EXCL_PAYLOAD - sizeof(ethernet_hdr->FCS));
+
+  /*Shift the pointer back by size of vlan header(4 bytes)*/
+  vlan_ethernet_hdr_t* vlan_ethernet_hdr = (vlan_ethernet_hdr_t*)((char*)ethernet_hdr - sizeof(vlan_802q_hdr_t));
+ 
+  /*Intialize the data before payload to zero*/ 
+  memset((char*)vlan_ethernet_hdr, 0, VLAN_ETH_HDR_SZ_EXCL_PAYLOAD - sizeof(vlan_ethernet_hdr->FCS));
+
+  memcpy(vlan_ethernet_hdr->dst_addr.mac, ethernet_hdr_old.dst_addr.mac, sizeof(mac_add_t));
+  memcpy(vlan_ethernet_hdr->src_addr.mac, ethernet_hdr_old.src_addr.mac, sizeof(mac_add_t));
+
+  vlan_ethernet_hdr->type = ethernet_hdr_old.type;
+
+  vlan_ethernet_hdr->vlan_802q_hdr.tpid = 0X8100;
+  vlan_ethernet_hdr->vlan_802q_hdr.tci_pcp  = 0;
+  vlan_ethernet_hdr->vlan_802q_hdr.tci_dei  = 0;
+  vlan_ethernet_hdr->vlan_802q_hdr.tci_vid  = (short)vlan_id;
+
+  *new_pkt_size = total_pkt_size + sizeof(vlan_802q_hdr_t);
+
+  return (ethernet_hdr_t*)vlan_ethernet_hdr;
+}
+
+ethernet_hdr_t*
+untag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
+                        unsigned int total_pkt_size,
+                        unsigned int *new_pkt_size) {
+
+  vlan_802q_hdr_t* vlan_802q_hdr = is_pkt_vlan_tagged(ethernet_hdr);
+
+  if (vlan_802q_hdr == NULL) {
+    new_pkt_size = total_pkt_size;
+    return ethernet_hdr;
+  }
+
+  vlan_ethernet_hdr_t vlan_ethernet_hdr_old;
+  memcpy((char*)&vlan_ethernet_hdr_old,
+	(char*)ethernet_hdr,
+	VLAN_ETH_HDR_SZ_EXCL_PAYLOAD - sizeof(ethernet_hdr->FCS));
+
+  ethernet_hdr = (ethernet_hdr_t*)((char*)ethernet_hdr + sizeof(vlan_802q_hdr_t));
+
+  memcpy(ethernet_hdr->dst_addr.mac, vlan_ethernet_hdr_old.dst_addr.mac, sizeof(mac_add_t));
+  memcpy(ethernet_hdr->src_addr.mac, vlan_ethernet_hdr_old.src_addr.mac, sizeof(mac_add_t));
+
+  ethernet_hdr->type = vlan_ethernet_hdr_old.type;
+
+  *new_pkt_size = total_pkt_size - sizeof(vlan_802q_hdr_t);
+
+  return ethernet_hdr;
+}
+
+void
+interface_set_vlan(node_t* node, interface_t* interface,
+			unsigned int vlan) {
+
+  if(IS_INTF_L3_MODE(interface)) {
+	printf("Error: L3 mode configured.\n");
+	return;
+  }
+
+  if(INTF_L2_MODE(interface) != TRUNK &&
+	INTF_L2_MODE(interface) != ACCESS) {
+     printf("Error: L2 mode not configured.\n");
+     return;
+  }
+
+  if(INTF_L2_MODE(interface) = ACCESS) {
+    interface->intf_nw_prop.vlans[0] = vlan;
+  }
+
+  if(INTF_L2_MODE(interface) = TRUNK) {
+
+    unsigned int i=0;
+
+    for ( ;i<MAX_VLAN_MEMBERSHIP; i++) {
+	if (interface->intf_nw_prop.vlans[i] == 0) {
+	  interface->intf_nw_prop.vlans[i] = vlan;
+	  return;
+	}
+	else if(interface->intf_nw_prop.vlans[i] == vlan) 
+	  return;	
+    }
+  }
+}
+
+void
+node_set_intf_vlan_membership(node_t* node, char* intf_name,
+				unsigned int vlan) {
+
+  interface_t* interface = get_node_intf_by_name(node, intf_name);
+  assert(interface);
+
+  interface_set_vlan(node, interface, vlan);
+
+}
