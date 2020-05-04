@@ -75,7 +75,7 @@ _send_pkt_out(int sock, char* aux_data, int size, int dest_port) {
 int
 send_pkt_out(char* pkt, unsigned int pkt_size,
             interface_t *interface) {
- 
+
  int rc;
  node_t* origin_node = interface->attr_node;
  link_t* link        = interface->link;

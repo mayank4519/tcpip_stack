@@ -39,7 +39,7 @@ node_set_loopback_address(node_t* node, char* ip_addr) {
 }
 
 bool
-node_set_intf_ip_addres(node_t* node, char* local_if, char* ip_addr, char mask) {
+node_set_intf_ip_address(node_t* node, char* local_if, char* ip_addr, char mask) {
 
   interface_t* intf = get_node_intf_by_name(node, local_if);
   if(intf == NULL) assert(0);
@@ -54,21 +54,37 @@ node_set_intf_ip_addres(node_t* node, char* local_if, char* ip_addr, char mask) 
 
 void dump_node_nw_prop(node_t* node) {
 
-  printf("Node name: %s\n", node->node_name);
-  printf("Node network IP: %s\n", NODE_LO_ADDR(node));
+  printf("Node name= %s\t", node->node_name);
+  printf("udp_sock_fd: %u\n", node->udp_sock_fd);
+  if(node->node_nw_prop.is_lb_ip_config == true)
+    printf("Node network IP= %s\n", NODE_LO_ADDR(node));
 }
 
 void dump_interface_prop(interface_t* intf) {
  
- printf("Interface name: %s\n", intf->if_name);
+ unsigned int i = 0;
+
+ printf("\nInterface name= %s\n", intf->if_name);
+ printf("l2 mode= %s\t", intf_l2_mode_str(INTF_L2_MODE(intf)));
 
   if(intf->intf_nw_prop.is_ip_config == true) 
     printf("Interface IP address: %s/%c\n", INTF_IP(intf), intf->intf_nw_prop.mask);
 
-  printf("Inreface MAC address: %u:%u:%u:%u:%u:%u\n", 
+  printf("Interface MAC address: %u:%u:%u:%u:%u:%u\n", 
 	INTF_MAC(intf)[0], INTF_MAC(intf)[1], 
 	INTF_MAC(intf)[2], INTF_MAC(intf)[3], 
 	INTF_MAC(intf)[4], INTF_MAC(intf)[5]);
+
+  printf("vlan membership : ");
+  for ( ; i < MAX_VLAN_MEMBERSHIP; i++) {
+    if(intf->intf_nw_prop.vlans[i] == 0) {
+      printf("\n\n");
+      return;
+    }
+
+    printf("%u ", intf->intf_nw_prop.vlans[i]);
+  }
+  printf("\n");
 }
 
 void dump_nw_graph(graph_t* topo) {
@@ -76,7 +92,7 @@ void dump_nw_graph(graph_t* topo) {
   interface_t* intf;
   gl_thread_t* curr;
   node_t* node;
-  printf("Topology name: %s", topo->topology_name);
+  printf("Topology name: %s\n", topo->topology_name);
 
   ITERATE_GLTHREAD_BEGIN(&topo->node_list, curr) {
     //node = GET_NODE(curr); //This approach can also be used instead of one written above.
@@ -124,4 +140,17 @@ node_get_matching_subnet_interface(node_t* node, char* ip_addr) {
 
 }
 
+bool
+is_trunk_interface_vlan_enabled(interface_t* intf, unsigned int vid) {
 
+  unsigned int i = 0;
+
+  if (INTF_L2_MODE(intf) != TRUNK)
+    assert(0);
+
+  for(; i < MAX_VLAN_MEMBERSHIP; i++) {
+    if(intf->intf_nw_prop.vlans[i] == vid)
+      return true;
+  }
+  return false;
+}

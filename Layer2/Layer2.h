@@ -79,8 +79,11 @@ GLTHREAD_TO_STRUCT(arp_glue_to_arp_entry, arp_entry_t, arp_glue);
 static inline vlan_802q_hdr_t*
 is_pkt_vlan_tagged(ethernet_hdr_t* ethernet_hdr) {
 
- if (ethernet_hdr->type == 0X8100)
-    return (vlan_802q_hdr_t*)&(ethernet_hdr->type);
+ vlan_802q_hdr_t* vlan_802q_hdr = (vlan_802q_hdr_t*)((char*)ethernet_hdr + 2* sizeof(mac_add_t));
+
+ if (vlan_802q_hdr->tpid == 0X8100)
+    return vlan_802q_hdr;
+
  return NULL;
 }
 

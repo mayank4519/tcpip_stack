@@ -20,14 +20,11 @@ interface_set_l2_mode(node_t* node,
   if(strncmp(l2mode, "access", strlen("access")) == 0)
     intf_l2_mode = ACCESS;
   
-  else if(strncmp(l2mode, "trunk", strlen("access")) == 0)
+  else if(strncmp(l2mode, "trunk", strlen("trunk")) == 0)
     intf_l2_mode = TRUNK;
 
   else
     assert(0);
-
-  if(INTF_L2_MODE(interface) == intf_l2_mode)
-    return;
 
   if(IS_INTF_L3_MODE(interface)){
     interface->intf_nw_prop.is_ip_config = false;
@@ -35,16 +32,18 @@ interface_set_l2_mode(node_t* node,
     return;
   }
 
+  if(INTF_L2_MODE(interface) == intf_l2_mode) {
+    return;
+  }
+
   if(INTF_L2_MODE(interface) == L2_MODE_UNKNOWN) {
     INTF_L2_MODE(interface) = intf_l2_mode;
-    printf("%s L2 mode set on interface: %s\n", intf_l2_mode_str(INTF_L2_MODE(interface)), interface->if_name);
     return;
   }
 
   if(INTF_L2_MODE(interface) == ACCESS && 
 	intf_l2_mode == TRUNK) {
     INTF_L2_MODE(interface) = intf_l2_mode;
-    printf("%s L2 mode set on interface: %s\n", intf_l2_mode_str(INTF_L2_MODE(interface)), interface->if_name);
     return;
   }
 
@@ -59,7 +58,6 @@ interface_set_l2_mode(node_t* node,
         interface->intf_nw_prop.vlans[i] = 0;
     }
 
-    printf("%s L2 mode set on interface: %s\n", intf_l2_mode_str(INTF_L2_MODE(interface)), interface->if_name);
     return;
   }
 
@@ -76,28 +74,62 @@ node_set_intf_l2_mode(node_t* node, char* iif,
 
 static bool
 l2_frame_recv_qualify_on_interface(interface_t *interface,
-                                    ethernet_hdr_t *ethernet_hdr){
+                                    ethernet_hdr_t *ethernet_hdr,
+					unsigned int *output_vlan){
+
+  vlan_802q_hdr_t *vlan_802q_hdr =
+                        is_pkt_vlan_tagged(ethernet_hdr);
 
   if(!IS_INTF_L3_MODE(interface) &&
-      INTF_L2_MODE(interface) == L2_MODE_UNKNOWN)  
-	return false;
+      INTF_L2_MODE(interface) == L2_MODE_UNKNOWN) { 
+       printf("%s: l2 mode unknown\n", __FUNCTION__);
+	return false; //CASE 1
+  }
 
-  if(!IS_INTF_L3_MODE(interface) &&
-      INTF_L2_MODE(interface) == ACCESS ||
-      INTF_L2_MODE(interface) == TRUNK)  
-	return true;
+  if (INTF_L2_MODE(interface) == ACCESS) {
+
+   if(NULL == vlan_802q_hdr) {
+     if (interface->intf_nw_prop.vlans[0]) {
+       *output_vlan = interface->intf_nw_prop.vlans[0];
+       return true; //CASE 2
+     }
+     else
+	return false; //CASE 3
+   }
+
+   else {
+     if(vlan_802q_hdr->tci_vid == interface->intf_nw_prop.vlans[0])
+	return true; //CASE 4
+     else
+	return false; //CASE 5
+   }
+  }
+
+  if(INTF_L2_MODE(interface) == TRUNK) {
+    if(vlan_802q_hdr == NULL)
+      return false; // CASE 6
+
+    else {
+      return (is_trunk_interface_vlan_enabled(interface, vlan_802q_hdr->tci_vid) == true) ? 
+        true : false; // CASE 7 8
+    }
+  }
 
   if(IS_INTF_L3_MODE(interface) &&
-	memcmp(ethernet_hdr->dst_addr.mac,
-           INTF_MAC(interface),
-           sizeof(mac_add_t)) == 0)
-    return true;
+	vlan_802q_hdr)
+	return false; //CASE 9
 
   if(IS_INTF_L3_MODE(interface) &&
+	!vlan_802q_hdr &&
+	memcmp(ethernet_hdr->dst_addr.mac, INTF_MAC(interface), sizeof(mac_add_t)) == 0)
+    return true; //CASE 10
+
+  if(IS_INTF_L3_MODE(interface) &&
+	!vlan_802q_hdr &&
 	IS_MAC_BROADCAST_ADDR(ethernet_hdr->dst_addr.mac))
-    return true;
+    return true; //CASE 11
 
-  return false;
+  return false; //CASE 12
 }
 
 
@@ -105,11 +137,12 @@ void
 layer2_frame_recv(node_t *node, interface_t *interface,
                      char *pkt, unsigned int pkt_size){
 
-  ethernet_hdr_t *ethernet_hdr = (ethernet_hdr_t *)pkt;
+    ethernet_hdr_t *ethernet_hdr = (ethernet_hdr_t *)pkt;
+    unsigned int vlan_id_to_tag = 0;
 
-    if(l2_frame_recv_qualify_on_interface(interface, ethernet_hdr) == false){
+    if(l2_frame_recv_qualify_on_interface(interface, ethernet_hdr, &vlan_id_to_tag) == false){
 
-        printf("L2 Frame Rejected on interface: %s\n", interface->if_name);
+        printf("L2 Frame Rejected on interface: %s of node: %s\n", interface->if_name, node->node_name);
         return;
     }
 
@@ -141,8 +174,16 @@ layer2_frame_recv(node_t *node, interface_t *interface,
     }
     else if(INTF_L2_MODE(interface) == TRUNK ||
 		INTF_L2_MODE(interface) == ACCESS) {
-        printf("Interface is in %s L2 mode\n", intf_l2_mode_str(INTF_L2_MODE(interface)));
-	l2_switch_recv_frame(interface, pkt, pkt_size);
+
+     unsigned int new_pkt_size = 0;
+     if (vlan_id_to_tag) {
+       pkt = tag_pkt_with_vlan_id((ethernet_hdr_t*)pkt,
+                            pkt_size, vlan_id_to_tag,
+                            &new_pkt_size); 
+	assert(new_pkt_size != pkt_size);
+     }
+
+	l2_switch_recv_frame(interface, pkt, vlan_id_to_tag ?  new_pkt_size : pkt_size);
     }
     else
 	return;
@@ -278,7 +319,7 @@ static void
 process_arp_reply_request(node_t* node, interface_t* iif, 
 			 ethernet_hdr_t* ethernet_hdr) {
 
-  printf("process_arp_reply_request: on interface: %s of node: %s\n", iif->if_name, node->node_name);
+  printf("ARP reply recieved on interface: %s of node: %s\n", iif->if_name, node->node_name);
   arp_table_update_from_arp_reply(NODE_ARP_TABLE(node), 
 				(arp_hdr_t *)ethernet_hdr->payload, iif);
 }
@@ -388,7 +429,7 @@ tag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
   vlan_ethernet_hdr->vlan_802q_hdr.tci_vid  = (short)vlan_id;
 
   *new_pkt_size = total_pkt_size + sizeof(vlan_802q_hdr_t);
-
+  
   return (ethernet_hdr_t*)vlan_ethernet_hdr;
 }
 
@@ -400,6 +441,7 @@ untag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
   vlan_802q_hdr_t* vlan_802q_hdr = is_pkt_vlan_tagged(ethernet_hdr);
 
   if (vlan_802q_hdr == NULL) {
+    printf("%s(), packet doesnt have a vlan header so no need to remove\n", __FUNCTION__);
     new_pkt_size = total_pkt_size;
     return ethernet_hdr;
   }
@@ -417,7 +459,6 @@ untag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
   ethernet_hdr->type = vlan_ethernet_hdr_old.type;
 
   *new_pkt_size = total_pkt_size - sizeof(vlan_802q_hdr_t);
-
   return ethernet_hdr;
 }
 
@@ -436,11 +477,11 @@ interface_set_vlan(node_t* node, interface_t* interface,
      return;
   }
 
-  if(INTF_L2_MODE(interface) = ACCESS) {
+  if(INTF_L2_MODE(interface) == ACCESS) {
     interface->intf_nw_prop.vlans[0] = vlan;
   }
 
-  if(INTF_L2_MODE(interface) = TRUNK) {
+  if(INTF_L2_MODE(interface) == TRUNK) {
 
     unsigned int i=0;
 
