@@ -1,0 +1,51 @@
+-------------------
+
+dual switch loop testing:
+
+config node L2SW1 interface eth0/2 l2mode access
+config node L2SW1 interface eth0/5 l2mode trunk
+config node L2SW1 interface eth0/6 l2mode access
+config node L2SW1 interface eth0/7 l2mode access
+
+config node L2SW2 interface eth0/9 l2mode access
+config node L2SW2 interface eth0/10 l2mode access
+config node L2SW2 interface eth0/12 l2mode access
+config node L2SW2 interface eth0/7 l2mode trunk
+
+run node H1 resolve-arp 10.1.1.6
+
+root@juniper> $ run node H1 resolve-arp 10.1.1.6
+Parse Success.
+L2 Frame Accepted on interface: eth0/2 of node: L2SW1
+
+root@juniper> $ L2 Frame Accepted on interface: eth0/7 of node: L2SW2
+L2 Frame Accepted on interface: eth0/3 of node: H2
+ARP Broadcast req recieved on interface: eth0/3 of node : H2
+H2: ARP Broadcast req msg dropped, destination IP: 10.1.1.6 didnt match with interface IP: 10.1.1.2
+L2 Frame Accepted on interface: eth0/11 of node: H6
+ARP Broadcast req recieved on interface: eth0/11 of node : H6
+L2 Frame Accepted on interface: eth0/8 of node: H5
+ARP Broadcast req recieved on interface: eth0/8 of node : H5
+H5: ARP Broadcast req msg dropped, destination IP: 10.1.1.6 didnt match with interface IP: 10.1.1.5
+L2 Frame Accepted on interface: eth0/10 of node: L2SW2
+L2 Frame Accepted on interface: eth0/5 of node: L2SW1
+L2 Frame Accepted on interface: eth0/1 of node: H1
+ARP reply recieved on interface: eth0/1 of node: H1
+
+root@juniper> $
+
+
+************
+root@juniper> $ show node H1 arp
+Parse Success.
+IP: 10.1.1.6, SRC MAC: 43:214:172:28:0:0, OIF: eth0/1
+root@juniper> $ show node L2SW1 mac
+Parse Success.
+Interface: eth0/5, MAC 43:214:172:28:0:0
+Interface: eth0/2, MAC 128:79:78:79:0:0
+
+root@juniper> $ show node L2SW2 mac
+Parse Success.
+Interface: eth0/10, MAC 43:214:172:28:0:0
+Interface: eth0/7, MAC 128:79:78:79:0:0
+*************
