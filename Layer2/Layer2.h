@@ -7,8 +7,10 @@
 #define ARP_BROADCAST_REQ 1
 #define ARP_REPLY 2
 #define ARP_MSG 806
+#define ETH_IP 0x0800
 #define MAC_BROADCAST_ADDR 0XFFFFFFFFFFFF
-
+#define ICMP_PRO        1
+#define ETH_IP          0x0800
 /*VLAN Support*/
 
 #pragma pack (push,1)
@@ -33,6 +35,8 @@ typedef struct vlan_ethernet_hdr_ {
 
 #define VLAN_ETH_HDR_SZ_EXCL_PAYLOAD \
 		(sizeof(vlan_ethernet_hdr_t) - sizeof(((vlan_ethernet_hdr_t*)0)->payload))
+
+#define VLAN_ETH_FCS(hdr, size)  (*(unsigned int*)((char*)(((vlan_ethernet_hdr_t*)hdr)->payload) + size))
 
 #pragma pack (push,1)
 typedef struct arp_hdr_ {
@@ -61,6 +65,8 @@ typedef struct ethernet_hdr_ {
 #define ETH_HDR_SZ_EXCL_PAYLOAD \
 		(sizeof(ethernet_hdr_t) - sizeof(((ethernet_hdr_t*)0)->payload))
 
+#define ETH_FCS(hdr, size)  (*(unsigned int*)((char*)(((ethernet_hdr_t*)hdr)->payload) + size))
+
 /*ARP table entry*/
 typedef struct arp_table_ {
   gl_thread_t arp_entries;
@@ -85,6 +91,57 @@ is_pkt_vlan_tagged(ethernet_hdr_t* ethernet_hdr) {
     return vlan_802q_hdr;
 
  return NULL;
+}
+
+static inline char*
+GET_ETHERNET_HDR_PAYLOAD(ethernet_hdr_t* ethernet_hdr) {
+
+  vlan_802q_hdr_t* vlan_802q_hdr = is_pkt_vlan_tagged(ethernet_hdr);
+  if(vlan_802q_hdr != NULL) {
+    vlan_ethernet_hdr_t* vlan_ethernet_hdr = (vlan_ethernet_hdr_t*)ethernet_hdr;
+    return  vlan_ethernet_hdr->payload;
+  }
+  return ethernet_hdr->payload;
+}
+
+static inline unsigned int
+GET_ETH_HDR_SIZE_EXCL_PAYLOAD(ethernet_hdr_t *ethernet_hdr){
+
+  vlan_802q_hdr_t* vlan_802q_hdr = is_pkt_vlan_tagged(ethernet_hdr);
+  if(vlan_802q_hdr != NULL)
+    return VLAN_ETH_HDR_SZ_EXCL_PAYLOAD;
+
+  return ETH_HDR_SZ_EXCL_PAYLOAD;
+  
+}
+
+static inline void
+SET_COMMON_ETH_FCS(ethernet_hdr_t *ethernet_hdr,
+                   unsigned int payload_size,
+                   unsigned int new_fcs){
+
+    if(is_pkt_vlan_tagged(ethernet_hdr)){
+        VLAN_ETH_FCS(ethernet_hdr, payload_size) = new_fcs;
+    }
+    else{
+        ETH_FCS(ethernet_hdr, payload_size) = new_fcs;
+    }
+}
+
+static inline ethernet_hdr_t*
+ALLOC_ETH_HDR_WITH_PAYLOAD(char* pkt, unsigned int pkt_size) {
+
+  char* temp = NULL;
+  temp = calloc(1, pkt_size);
+  memcpy(temp, pkt, pkt_size);
+
+  ethernet_hdr_t* ethernet_hdr = (ethernet_hdr_t*)(pkt - ETH_HDR_SZ_EXCL_PAYLOAD);
+  memset(ethernet_hdr, 0, ETH_HDR_SZ_EXCL_PAYLOAD);
+  memcpy(ethernet_hdr->payload, temp, pkt_size);
+  SET_COMMON_ETH_FCS(ethernet_hdr, pkt_size, 0);
+  free(temp);
+
+  return ethernet_hdr;
 }
 
 void
@@ -135,5 +192,20 @@ ethernet_hdr_t*
 untag_pkt_with_vlan_id(ethernet_hdr_t* ethernet_hdr,
 			unsigned int total_pkt_size,
 			unsigned int *new_pkt_size);
+
+/*An API used by ethernet layer to push the packet up towards layer2*/
+void
+promote_pkt_to_layer2(node_t* node, /*Current node on which pkt is recieved*/
+                        interface_t* intf, /*Recieving interface*/
+                        ethernet_hdr_t *ethernet_hdr,
+                        unsigned int pkt_size); /*payload size*/
+
+/*An API used by layer 5/4/3 to send the packet down to layer 2*/
+void
+demote_pkt_to_layer2(node_t *node, /*Currenot node*/
+		        unsigned int next_hop_ip,  /*If pkt is forwarded to next router, then this is Nexthop IP address (gateway) provid							ed by L3 layer. L2 need to resolve ARP for this IP address*/
+		        char *outgoing_intf,       /*The oif obtained from L3 lookup if L3 has decided to forward the pkt. If NULL, then 							L2 will find the appropriate interface*/
+		        char *pkt, unsigned int pkt_size,   /*Higher Layers payload*/
+		        int protocol_number);
 
 #endif

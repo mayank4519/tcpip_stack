@@ -26,6 +26,10 @@ interface_assign_mac_address(interface_t *interface){
     memcpy(INTF_MAC(interface), (char *)&hash_code_val, sizeof(unsigned int)); 
 }
 
+extern void
+rt_table_add_direct_route(rt_table_t *rt_table,
+                          char *dst, char mask);
+
 bool 
 node_set_loopback_address(node_t* node, char* ip_addr) {
 
@@ -34,7 +38,7 @@ node_set_loopback_address(node_t* node, char* ip_addr) {
   strncpy(NODE_LO_ADDR(node), ip_addr, 16);
   NODE_LO_ADDR(node)[15] = '\0';
   node->node_nw_prop.is_lb_ip_config = true;
-
+  rt_table_add_direct_route(NODE_RT_TABLE(node), ip_addr, 32);
   return true;
 }
 
@@ -48,6 +52,7 @@ node_set_intf_ip_address(node_t* node, char* local_if, char* ip_addr, char mask)
   INTF_IP(intf)[15] = '\0'; 
   intf->intf_nw_prop.is_ip_config = true; 
   intf->intf_nw_prop.mask         = mask; 
+  rt_table_add_direct_route(NODE_RT_TABLE(node), ip_addr, mask);
 
   return true;
 }
@@ -154,3 +159,38 @@ is_trunk_interface_vlan_enabled(interface_t* intf, unsigned int vid) {
   }
   return false;
 }
+
+
+/*When pkt moves from top to down in TCP/IP stack, we would need
+  room in the pkt buffer to attach more new headers. Below function
+  simply shifts the pkt content present in the start of the pkt buffer
+  towards right so that new room is created*/
+
+char*
+pkt_buffet_right_shift(char* pkt,
+			unsigned int pkt_size,
+			unsigned int total_buffer_size) {
+
+  char* temp = NULL;
+  bool need_temp_memory = false;
+
+  if(pkt_size * 2 > total_buffer_size)
+    need_temp_memory = true;
+
+  if(need_temp_memory) {
+    temp = calloc(1, pkt_size);
+    memset(temp, 0, pkt_size);
+    memcpy(temp, pkt, pkt_size);
+
+    memset(pkt, 0, total_buffer_size);
+    memcpy(pkt + (total_buffer_size - pkt_size), temp, pkt_size);
+    free(temp);
+    return pkt + (total_buffer_size - pkt_size);
+  }
+
+  memcpy(pkt + (total_buffer_size - pkt_size), pkt, pkt_size);
+  memset(pkt, 0, pkt_size);
+  return (pkt + (total_buffer_size - pkt_size));
+
+}
+
