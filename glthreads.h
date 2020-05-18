@@ -14,6 +14,9 @@ void remove_glthread(gl_thread_t *glnode);
 
 #define BASE(start) ((start)->right)
 
+#define IS_GLTHREAD_LIST_EMPTY(glthreadptr) \
+   ((glthreadptr)->left == 0 && (glthreadptr)->right == 0)
+
 #define ITERATE_GLTHREAD_BEGIN(start, curr) \
 { 					    \
   gl_thread_t* temp = NULL;		    \

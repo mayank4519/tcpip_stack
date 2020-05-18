@@ -72,15 +72,51 @@ typedef struct arp_table_ {
   gl_thread_t arp_entries;
 }arp_table_t;
 
+typedef struct arp_pending_entry_ arp_pending_entry_t;
+typedef struct arp_entry_ arp_entry_t;
+typedef void (*arp_processing_fn)(node_t*,
+				interface_t*,
+				arp_entry_t*,
+				arp_pending_entry_t*);
+
+struct arp_pending_entry_{
+  gl_thread_t arp_pending_entry_glue;
+  arp_processing_fn cb;
+  unsigned int pkt_size;
+  char pkt[0];
+};
+GLTHREAD_TO_STRUCT(arp_pending_entry_glue_to_arp_pending_entry, 
+			arp_pending_entry_t, arp_pending_entry_glue);
+
 typedef struct arp_entry_ {
 
   ip_add_t ip_addr;
   mac_add_t mac_addr;
   char oif[16];
+  bool is_sane;
   gl_thread_t arp_glue;
+  /* List of packets which are pending for
+   * this ARP resolution*/
+  gl_thread_t arp_pending_list;
 }arp_entry_t;
+
+static bool
+arp_entry_sane(arp_entry_t *arp_entry) {
+  return arp_entry->is_sane;
+}
+
 GLTHREAD_TO_STRUCT(arp_glue_to_arp_entry, arp_entry_t, arp_glue);
+GLTHREAD_TO_STRUCT(arp_pending_list_to_arp_entry, arp_entry_t, arp_pending_list);
+
 //#define GET_NODE(curr) (arp_entry_t*)((char*)curr - offsetof(arp_entry_t, arp_glue))
+//#define GET_NODE(curr) (arp_entry_t*)((char*)curr - offsetof(arp_entry_t, arp_pending_list_glue))
+
+#define IS_ARP_ENTRIES_EQUAL(arp_entry1, arp_entry2)	 \
+    (strncmp(arp_entry1->ip_addr.ip_addr, arp_entry2->ip_addr.ip_addr, 16) == 0 &&			      \
+     strncmp(arp_entry1->mac_addr.mac, arp_entry2->mac_addr.mac, 6) == 0 && 				      \
+     strncmp(arp_entry1->oif, arp_entry2->oif, IF_NAME_SIZE)                    == 0 &&					      \
+     arp_entry1->is_sane == arp_entry2->is_sane &&     \
+     arp_entry1->is_sane == false)
 
 static inline vlan_802q_hdr_t*
 is_pkt_vlan_tagged(ethernet_hdr_t* ethernet_hdr) {
@@ -157,7 +193,7 @@ void
 delete_arp_table_entry(arp_table_t *arp_table, char *ip_addr);
 
 bool
-arp_table_entry_add(arp_table_t *arp_table, arp_entry_t *arp_entry);
+arp_table_entry_add(arp_table_t *arp_table, arp_entry_t *arp_entry, gl_thread_t **arp_pending_list);
 
 void
 dump_arp_table(arp_table_t *arp_table);
@@ -207,5 +243,11 @@ demote_pkt_to_layer2(node_t *node, /*Currenot node*/
 		        char *outgoing_intf,       /*The oif obtained from L3 lookup if L3 has decided to forward the pkt. If NULL, then 							L2 will find the appropriate interface*/
 		        char *pkt, unsigned int pkt_size,   /*Higher Layers payload*/
 		        int protocol_number);
+
+static void
+pending_arp_processing_callback_function(node_t* node,
+                                interface_t* oif,
+                                arp_entry_t* arp_entry,
+                                arp_pending_entry_t*);
 
 #endif

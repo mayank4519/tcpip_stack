@@ -235,28 +235,71 @@ delete_arp_table_entry(arp_table_t *arp_table, char *ip_addr) {
  if(arp_entry == NULL)
    return;
 
- remove_glthread(&arp_entry->arp_glue); 
- free(arp_entry); 
+ delete_arp_entry(arp_entry);
 
 }
 
 bool
-arp_table_entry_add(arp_table_t *arp_table, arp_entry_t *arp_entry) {
+arp_table_entry_add(arp_table_t *arp_table, arp_entry_t *arp_entry,
+		gl_thread_t **arp_pending_list) {
 
   arp_entry_t* old_arp_entry = arp_table_lookup(arp_table, arp_entry->ip_addr.ip_addr);
 
-  if(old_arp_entry && 
-	memcmp(old_arp_entry, arp_entry, sizeof(arp_entry_t)) == 0)
-    return false;
-
-  if(old_arp_entry) {
-    delete_arp_table_entry(arp_table, old_arp_entry->ip_addr.ip_addr);
+  //CASE 1: If arp entry doesn't exist
+  if(!old_arp_entry) {
+    glthread_add_next(&arp_table->arp_entries, 
+			&arp_entry->arp_glue);
+    return true;
   }
 
-  glthread_node_init(&arp_entry->arp_glue); 
-  glthread_add_next(&arp_table->arp_entries, &arp_entry->arp_glue); 
- 
-  return true;
+  //CASE 2: If arp entry exist and new entry are same.
+  if(old_arp_entry &&
+	IS_ARP_ENTRIES_EQUAL(old_arp_entry, arp_entry)) {
+    return false;
+  }
+
+  //CASE 3: If arp entry exist and not same
+  if(old_arp_entry && !arp_entry_sane(old_arp_entry)) {
+    delete_arp_entry(old_arp_entry);
+    glthread_node_init(&arp_entry->arp_glue);
+    glthread_add_next(&arp_table->arp_entries, &arp_entry->arp_glue);
+    return true;
+  }
+
+  //CASE 4: If both old and new arp entry are sane then move the pending arp list from new to old arp entry.
+  if(old_arp_entry &&
+	arp_entry_sane(old_arp_entry) &&
+	arp_entry_sane(arp_entry)) {
+
+   if(!IS_GLTHREAD_LIST_EMPTY(&arp_entry->arp_pending_list))  {
+     
+     glthread_add_next(&old_arp_entry->arp_pending_list,
+			arp_entry->arp_pending_list.right);
+  }
+     if(arp_pending_list)
+       *arp_pending_list = 
+		&old_arp_entry->arp_pending_list;
+  
+   return false;
+  }
+
+  //CASE 5: If old arp entry is sane, but new one is not sane then copy all the content of new ARP entry to old one.
+  if(old_arp_entry &&
+	arp_entry_sane(old_arp_entry) &&
+        !arp_entry_sane(arp_entry)) {
+  
+    strncpy(old_arp_entry->mac_addr.mac, arp_entry->mac_addr.mac, 6);
+    strncpy(old_arp_entry->oif, arp_entry->oif, IF_NAME_SIZE);
+    old_arp_entry->oif[IF_NAME_SIZE - 1] = '\0';
+
+    if(arp_pending_list)
+      *arp_pending_list = 
+		&old_arp_entry->arp_pending_list;
+
+    return false;
+  }
+
+  return false;
 }
 
 void
@@ -280,25 +323,89 @@ dump_arp_table(arp_table_t *arp_table) {
 
 }
 
+static void
+process_arp_pending_entry(node_t* node,
+			interface_t* iif,
+			arp_entry_t *arp_entry,
+			arp_pending_entry_t *arp_pending_entry) 
+{
+  arp_pending_entry->cb(node, iif, 
+			arp_entry, arp_pending_entry);
+}
+
+static void
+delete_arp_pending_entry(arp_pending_entry_t* 
+		arp_pending_entry) {
+
+  remove_glthread(&arp_pending_entry->arp_pending_entry_glue);
+  free(arp_pending_entry);
+}
+
+
+void
+delete_arp_entry(arp_entry_t* arp_entry) {
+
+  gl_thread_t* curr;
+  arp_pending_entry_t *arp_pending_entry;
+  remove_glthread(&arp_entry->arp_glue);
+
+  ITERATE_GLTHREAD_BEGIN(&arp_entry->arp_pending_list
+			, curr){
+
+    arp_pending_entry = arp_pending_entry_glue_to_arp_pending_entry(curr);
+    delete_arp_pending_entry(arp_pending_entry);
+
+  } ITERATE_GLTHREAD_END(&arp_entry->arp_pending_list, 
+	curr);
+
+  free(arp_entry);
+	
+}
+
 void
 arp_table_update_from_arp_reply(arp_table_t *arp_table,
                                 arp_hdr_t *arp_hdr, interface_t *iif) {
 
   unsigned int src_ip = 0;
   assert(arp_hdr->op_code == ARP_REPLY);
+  
+  gl_thread_t* arp_pending_list = NULL;
 
   src_ip = htonl(arp_hdr->src_ip);
   arp_entry_t* arp_entry = calloc(1, sizeof(arp_entry_t));
   inet_ntop(AF_INET, &src_ip, &arp_entry->ip_addr.ip_addr, 16);
   arp_entry->ip_addr.ip_addr[15] = '\0';
-
+  arp_entry->is_sane = false;
   strncpy(arp_entry->mac_addr.mac, arp_hdr->src_mac.mac, sizeof(mac_add_t));
   strncpy(arp_entry->oif, iif->if_name, IF_NAME_SIZE); 
-  arp_entry->oif[IF_NAME_SIZE] = '\0';
+  arp_entry->oif[IF_NAME_SIZE-1] = '\0';
   
-  if(arp_table_entry_add(arp_table, arp_entry) == false) {
-    free(arp_entry);
+  bool rc = arp_table_entry_add(arp_table, arp_entry, 
+		&arp_pending_list);
+
+  gl_thread_t *curr;
+  arp_pending_entry_t *arp_pending_entry;
+
+  if(arp_pending_list) {
+    
+    ITERATE_GLTHREAD_BEGIN(arp_pending_list, curr) {
+
+      arp_pending_entry = 
+	arp_pending_entry_glue_to_arp_pending_entry(curr);
+
+      remove_glthread(&arp_pending_entry->arp_pending_entry_glue);
+
+      process_arp_pending_entry(iif->attr_node, iif, 
+		arp_entry, arp_pending_entry);            
+
+      delete_arp_pending_entry(arp_pending_entry);
+
+    }ITERATE_GLTHREAD_END(arp_pending_list, curr);
+
+   (arp_pending_list_to_arp_entry(arp_pending_entry))->is_sane = false; 
   }
+  if (rc == false)
+    delete_arp_entry(arp_entry);
 }
 
 /*A routine to resolve ARP out of interface*/
@@ -528,6 +635,64 @@ node_set_intf_vlan_membership(node_t* node, char* intf_name,
   interface_set_vlan(node, interface, vlan);
 
 }
+static void
+pending_arp_processing_callback_function(node_t* node,
+                                interface_t* oif,
+                                arp_entry_t* arp_entry,
+                                arp_pending_entry_t* arp_pending_list) {
+
+  ethernet_hdr_t* ethernet_hdr = (ethernet_hdr_t*)arp_pending_list->pkt;
+  unsigned int pkt_size = arp_pending_list->pkt_size;
+  memcpy(ethernet_hdr->dst_addr.mac, arp_entry->mac_addr.mac, sizeof(mac_add_t));
+  memcpy(ethernet_hdr->src_addr.mac, INTF_MAC(oif), sizeof(mac_add_t));
+  SET_COMMON_ETH_FCS(ethernet_hdr, pkt_size - GET_ETH_HDR_SIZE_EXCL_PAYLOAD(ethernet_hdr), 0);
+  send_pkt_out((char *)ethernet_hdr, pkt_size, oif);
+
+}
+
+void
+add_arp_pending_entry(arp_entry_t* arp_entry,
+			arp_processing_fn cb,
+			char* pkt,
+			unsigned int pkt_size) {
+
+ arp_pending_entry_t* arp_pending_entry = 
+	calloc(1, sizeof(arp_pending_entry_t) + pkt_size);
+
+  glthread_node_init(&arp_pending_entry->arp_pending_entry_glue); 
+  
+  arp_pending_entry->cb = cb;
+  memcpy(arp_pending_entry->pkt, pkt, pkt_size);
+  arp_pending_entry->pkt_size = pkt_size;
+
+  glthread_add_next(&arp_entry->arp_pending_list,
+		&arp_pending_entry->arp_pending_entry_glue);
+}
+
+arp_entry_t*
+create_arp_sane_entry(arp_table_t* arp_table,
+			char* ip_addr) {
+
+  arp_entry_t* arp_entry = arp_table_lookup(arp_table, ip_addr);
+  
+  if(arp_entry)
+	if(!arp_entry_sane(arp_entry)) {
+	    assert(0);
+    return arp_entry;
+  }
+
+  /*If ARP entry doesn't exist, create an ARP entry*/
+  arp_entry = calloc(1, sizeof(arp_entry_t));
+  strncpy(arp_entry->ip_addr.ip_addr, ip_addr, 16);
+  arp_entry->ip_addr.ip_addr[15] = '\0';
+  arp_entry->is_sane = true;
+  glthread_node_init(&arp_entry->arp_pending_list);
+  bool rc = arp_table_entry_add(arp_table, arp_entry, 0); 
+  if(rc == false)
+    assert(0); 
+
+  return arp_entry;
+}
 
 extern bool
 is_layer3_local_delivery(node_t *node, unsigned int dst_ip);
@@ -559,9 +724,21 @@ l2_forward_ip_packet(node_t *node, unsigned int next_hop_ip,
     arp_entry = arp_table_lookup(NODE_ARP_TABLE(node), next_hop_ip_str);
 
     if(arp_entry == NULL) {
-      printf("Node: %s ARP entry not present for IP: %s\n", node->node_name, next_hop_ip_str);
-      assert(0);
+      /*Time for ARP resolution*/
+      arp_entry = create_arp_sane_entry(NODE_ARP_TABLE(node), 
+				next_hop_ip_str);
+
+      add_arp_pending_entry(arp_entry,
+			pending_arp_processing_callback_function,
+			(char*)pkt, pkt_size);
+ 
       send_arp_broadcast_request(node, intf, next_hop_ip_str);
+      return;
+    }
+    else if(arp_entry_sane(arp_entry)) {
+      add_arp_pending_entry(arp_entry, 
+			pending_arp_processing_callback_function,
+			(char*)pkt, pkt_size);
       return;
     }
     goto l2_frame_prepare ;
@@ -582,10 +759,22 @@ l2_forward_ip_packet(node_t *node, unsigned int next_hop_ip,
   arp_entry = arp_table_lookup(NODE_ARP_TABLE(node), next_hop_ip_str);
 
   if(arp_entry == NULL) {
-    printf("Node: %s ARP entry not present for IP: %s\n", node->node_name, next_hop_ip_str);
-    assert(0);
+     /*Time for ARP resolution*/
+    arp_entry = create_arp_sane_entry(NODE_ARP_TABLE(node),
+                              next_hop_ip_str);
+
+    add_arp_pending_entry(arp_entry,
+                      pending_arp_processing_callback_function,
+                       (char*)pkt, pkt_size);
+  
     send_arp_broadcast_request(node, intf, next_hop_ip_str);
     return;
+  }
+  else if(arp_entry_sane(arp_entry)) {
+      add_arp_pending_entry(arp_entry,
+                        pending_arp_processing_callback_function,
+                        (char*)pkt, pkt_size);
+      return;
   }
 
   intf = node_get_matching_subnet_interface(node, next_hop_ip_str);
